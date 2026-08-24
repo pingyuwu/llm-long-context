@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM 长上下文技术原理及其演化史：从RoPE到YaRN、DCA、iRoPE</title>
+    <script>
+        MathJax = {
+            tex: {
+                inlineMath: [
+                    ['$', '$'],
+                    ['\\(', '\\)']
+                ],
+                displayMath: [
+                    ['$$', '$$'],
+                    ['\\[', '\\]']
+                ]
+            },
+            svg: {
+                fontCache: 'global'
+            },
+            options: {
+                enableMenu: false
+            }
+        };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" id="MathJax-script" async>
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: #f7f9fc;
+            color: #1e293b;
+            line-height: 1.7;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 24px;
+            padding: 48px 56px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.06);
+        }
+
+        @media (max-width: 640px) {
+            .container {
+                padding: 24px 18px;
+                border-radius: 16px;
+            }
+            body {
+                padding: 10px;
+            }
+        }
+
+        h1 {
+            font-size: 2.4rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #0f172a 0%, #3b82f6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.3em;
+            line-height: 1.2;
+        }
+
+        h2 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            margin-top: 2.2em;
+            margin-bottom: 0.6em;
+            padding-bottom: 0.3em;
+            border-bottom: 3px solid #e2e8f0;
+            color: #0f172a;
+        }
+
+        h3 {
+            font-size: 1.35rem;
+            font-weight: 600;
+            margin-top: 1.8em;
+            margin-bottom: 0.5em;
+            color: #1e293b;
+        }
+
+        h4 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-top: 1.4em;
+            margin-bottom: 0.4em;
+            color: #334155;
+        }
+
+        p {
+            margin-bottom: 1em;
+        }
+
+        strong {
+            color: #0f172a;
+            font-weight: 600;
+        }
+
+        em {
+            font-style: italic;
+            color: #475569;
+        }
+
+        a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        /* 引用块 */
+        blockquote {
+            border-left: 4px solid #3b82f6;
+            padding: 0.8em 1.4em;
+            margin: 1.2em 0;
+            background: #f8fafc;
+            border-radius: 0 8px 8px 0;
+            color: #1e293b;
+        }
+
+        blockquote p {
+            margin-bottom: 0.4em;
+        }
+
+        blockquote p:last-child {
+            margin-bottom: 0;
+        }
+
+        /* 代码块 */
+        pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 16px 20px;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            margin: 1.2em 0;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+        }
+
+        pre code {
+            background: transparent;
+            color: inherit;
+            padding: 0;
+            font-size: inherit;
+        }
+
+        code {
+            background: #f1f5f9;
+            padding: 0.1em 0.5em;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+            color: #0f172a;
+        }
+
+        /* 表格 */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 1.4em 0;
+            border-radius: 12px;
+            border: 1px solid #e2e8f0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.92rem;
+            min-width: 500px;
+        }
+
+        table th {
+            background: #f1f5f9;
+            font-weight: 600;
+            text-align: left;
+            padding: 12px 16px;
+            border-bottom: 2px solid #cbd5e1;
+            color: #0f172a;
+        }
+
+        table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: top;
+        }
+
+        table tr:last-child td {
+            border-bottom: none;
+        }
+
+        table tr:hover {
+            background: #f8fafc;
+        }
+
+        /* 特殊卡片 */
+        .card-note {
+            background: #f0f7ff;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #3b82f6;
+        }
+
+        .card-example {
+            background: #fef9e7;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #f59e0b;
+        }
+
+        .card-metaphor {
+            background: #ecfdf5;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #10b981;
+        }
+
+        .card-check {
+            background: #f5f3ff;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #8b5cf6;
+        }
+
+        .card-tip {
+            background: #fff7ed;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #f97316;
+        }
+
+        .card-summary {
+            background: #f1f5f9;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #64748b;
+        }
+
+        .card-important {
+            background: #fef2f2;
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin: 1.2em 0;
+            border-left: 4px solid #ef4444;
+        }
+
+        .card-title {
+            font-weight: 700;
+            margin-bottom: 0.4em;
+            display: block;
+        }
+
+        /* 时间线 */
+        .timeline {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 6px 8px;
+            padding: 20px 10px;
+            margin: 1.5em 0;
+            background: #f8fafc;
+            border-radius: 16px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.85rem;
+        }
+
+        .timeline-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            background: #fff;
+            padding: 4px 12px;
+            border-radius: 20px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+            white-space: nowrap;
+        }
+
+        .timeline-item .year {
+            font-weight: 700;
+            color: #2563eb;
+        }
+
+        .timeline-item .label {
+            font-weight: 500;
+        }
+
+        .timeline-arrow {
+            color: #94a3b8;
+            font-size: 1.2rem;
+            font-weight: 300;
+        }
+
+        .timeline-desc {
+            width: 100%;
+            text-align: center;
+            font-size: 0.85rem;
+            color: #475569;
+            margin-top: 8px;
+            padding: 8px 0 0;
+            border-top: 1px dashed #d1d5db;
+        }
+
+        @media (max-width: 640px) {
+            .timeline-item {
+                font-size: 0.75rem;
+                padding: 3px 8px;
+            }
+            .timeline-arrow {
+                font-size: 0.9rem;
+            }
+        }
+
+        /* 列表 */
+        ul,
+        ol {
+            padding-left: 1.8em;
+            margin: 0.8em 0 1.2em;
+        }
+
+        li {
+            margin-bottom: 0.3em;
+        }
+
+        /* 数学公式块 */
+        .math-block {
+            text-align: center;
+            padding: 0.8em 0;
+            margin: 0.8em 0;
+            font-size: 1.05rem;
+            overflow-x: auto;
+        }
+
+        /* 分界 */
+        .hr-divider {
+            border: none;
+            height: 2px;
+            background: linear-gradient(to right, transparent, #cbd5e1, transparent);
+            margin: 2.4em 0;
+        }
+
+        /* 脚标等 */
+        .small-text {
+            font-size: 0.88rem;
+            color: #475569;
+        }
+
+        .highlight {
+            background: #fef9c3;
+            padding: 0.05em 0.3em;
+            border-radius: 4px;
+        }
+
+        /* 响应式表格 */
+        @media (max-width: 640px) {
+            table {
+                font-size: 0.82rem;
+                min-width: 0;
+            }
+            table th,
+            table td {
+                padding: 8px 10px;
+            }
+        }
+
+        /* 阅读指南表格特殊样式 */
+        .guide-table table {
+            min-width: 0;
+        }
+        .guide-table table td:first-child {
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        /* 决策树样式 */
+        .decision-tree {
+            background: #f8fafc;
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin: 1.2em 0;
+            border: 1px solid #e2e8f0;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+            font-size: 0.92rem;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        @media (max-width: 640px) {
+            .decision-tree {
+                font-size: 0.8rem;
+                padding: 14px 16px;
+            }
+        }
+
+        /* 数学公式中的特殊颜色 */
+        .math-highlight {
+            color: #2563eb;
+        }
+
+        /* 章节编号 */
+        .chapter-num {
+            display: inline-block;
+            background: #2563eb;
+            color: #fff;
+            font-weight: 700;
+            font-size: 0.8rem;
+            padding: 0.1em 0.8em;
+            border-radius: 30px;
+            margin-right: 8px;
+        }
+
+        /* 打印优化 */
+        @media print {
+            body {
+                background: #fff;
+                padding: 0;
+            }
+            .container {
+                box-shadow: none;
+                border-radius: 0;
+                padding: 30px 40px;
+            }
+            .card-note,
+            .card-example,
+            .card-metaphor,
+            .card-check,
+            .card-tip,
+            .card-summary,
+            .card-important {
+                break-inside: avoid;
+                border: 1px solid #ddd;
+            }
+            .timeline {
+                border: 1px solid #ccc;
+            }
+            pre {
+                background: #f4f4f4;
+                color: #111;
+            }
+            table th {
+                background: #e9e9e9;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+
+        <h1>LLM 长上下文技术原理及其演化史：从RoPE到YaRN、DCA、iRoPE</h1>
+
+        <hr class="hr-divider">
+
+        <!-- ============ 开篇 ============ -->
+        <h2>开篇：为什么长上下文是大模型的"必争之地"？</h2>
+
+        <p>想象一下：</p>
+        <ul>
+            <li><strong>4K 上下文</strong>：你只能写一封简短的邮件，或者聊十几轮对话。</li>
+            <li><strong>32K 上下文</strong>：你能丢进去一篇学术论文，让模型帮你总结。</li>
+            <li><strong>128K 上下文</strong>：你可以塞一整本书进去，跟它讨论任意章节。</li>
+            <li><strong>1M+ 上下文</strong>：你能把整个代码库、一部长篇小说、甚至一个项目的全部文档都倒进去，模型像人一样"通读全局"后再回答问题。</li>
+        </ul>
+
+        <p>长上下文能力，是大模型从"聊天玩具"走向"生产力工具"的关键门槛。它决定了模型能不能处理真实世界的复杂任务——法律合同审阅、代码库理解、长篇小说创作、学术论文综述……这些都需要模型"记住"大量信息。</p>
+
+        <p>但要做到这一点，并不容易。核心难题在于一个看似不起眼的东西：<strong>位置编码（Position Encoding）</strong>。</p>
+
+        <p>这篇文章会带你从最基础的原理出发，走完长上下文技术从 4K 到 10M 的完整演化路径。你会看到，每一次技术突破，本质上都是人类对"位置"这个概念的重新理解。</p>
+
+        <!-- ============ 时间线 ============ -->
+        <h3>⏳ 技术演化时间线</h3>
+
+        <div class="timeline">
+            <span class="timeline-item"><span class="year">2017</span> <span class="label">绝对位置编码</span></span>
+            <span class="timeline-arrow">→</span>
+            <span class="timeline-item"><span class="year">2019</span> <span class="label">相对位置编码</span></span>
+            <span class="timeline-arrow">→</span>
+            <span class="timeline-item"><span class="year">2021</span> <span class="label">RoPE</span></span>
+            <span class="timeline-arrow">→</span>
+            <span class="timeline-item"><span class="year">2023</span> <span class="label">PI</span></span>
+            <span class="timeline-arrow">→</span>
+            <span class="timeline-item"><span class="year">2023</span> <span class="label">YaRN</span></span>
+            <span class="timeline-arrow">→</span>
+            <span class="timeline-item"><span class="year">2024</span> <span class="label">DCA</span></span>
+            <span class="timeline-arrow">→</span>
+            <span class="timeline-item"><span class="year">2024</span> <span class="label">iRoPE</span></span>
+            <div class="timeline-desc">
+                贴牌式加法 &nbsp;→&nbsp; 偏置查表 &nbsp;→&nbsp; 旋转编码 &nbsp;→&nbsp; 线性插值 &nbsp;→&nbsp; 频率分层 &nbsp;→&nbsp; 零训练 &nbsp;→&nbsp; 层间交织
+            </div>
+        </div>
+        <hr class="hr-divider">
+
+        <!-- ============ 上篇 ============ -->
+        <h2>上篇：RoPE——旋转位置编码的革命与局限</h2>
+
+        <!-- 第一章 -->
+        <h3>第一章：一切问题的起点——Attention 的"位置色盲症"</h3>
+
+        <h4>1.1 什么是 Self-Attention？（为什么它看不到顺序）</h4>
+
+        <p>Transformer 的核心是 Self-Attention（自注意力机制）。它的数学形式是：</p>
+
+        <div class="math-block">
+            $$ \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V $$
+        </div>
+
+        <p>其中 $Q$（Query）和 $K$（Key）的内积 $QK^T$ 计算的是<strong>两两 token 之间的相似度</strong>。</p>
+
+        <p><strong>关键问题</strong>：这个公式里没有任何关于"位置"的参数。它处理的是一个<strong>集合</strong>，而不是一个<strong>序列</strong>。</p>
+
+        <div class="card-example">
+            <span class="card-title">🔍 手算实例（一针见血）</span>
+            <p>句子 A：<code>[我, 打, 你]</code><br>
+                句子 B：<code>[你, 打, 我]</code></p>
+            <p>对于"打"这个词，它与"我"和"你"的相似度是固定的（"打"和"我"在语义上更相关，"打"和"你"也是）。无论顺序如何排列，$QK^T$ 矩阵中"打"对"我"的权重、"打"对"你"的权重<strong>完全不变</strong>。</p>
+            <p>模型会把这两句话当成<strong>完全相同的词袋</strong>（Bag of Words），分不清"谁打了谁"——这在自然语言理解中是致命错误。</p>
+        </div>
+
+        <h4>1.2 为什么必须要有位置编码？</h4>
+
+        <p>为了区分顺序，我们必须给每个 token 注入"我在第几位"的信息。这就引出了位置编码（Position Encoding）的诞生。</p>
+
+        <div class="card-summary">
+            <span class="card-title">💡 一句话理解本章</span>
+            Self-Attention 本身是"位置盲"的——它只看词和词的语义相似度，完全不管谁在前谁在后。位置编码就是给每个词贴一个"我在第几位"的标签，让模型能感知顺序。
+        </div>
+
+        <div class="card-check">
+            <span class="card-title">🧠 自检一下</span>
+            <ol>
+                <li>为什么说 Self-Attention 处理的是"集合"而不是"序列"？</li>
+                <li>如果没有位置编码，模型会把"我爱你"和"你爱我"当成一样的吗？为什么？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <!-- 第二章 -->
+        <h3>第二章：前 RoPE 时代的两套老方案及其致命缺陷</h3>
+
+        <h4>2.1 方案 A：绝对位置编码（原始 Transformer）</h4>
+
+        <p>原始 Transformer 的做法是：给每个位置 $m$ 分配一个固定向量 $p_m$，然后<strong>直接加</strong>到 token embedding 上：</p>
+
+        <div class="math-block">
+            $$ \text{Input}_m = x_m + p_m $$
+        </div>
+
+        <p>其中 $x_m$ 是"苹果"这个词的语义向量，$p_m$ 是"第 m 位"的位置向量。</p>
+
+        <div class="card-example">
+            <span class="card-title">🔍 手算实例（揭示"拆开再组合"的痛苦）</span>
+            <p>假设"苹果"的语义向量是 $[1, 0]$，第 5 位的位置向量是 $[10, 0]$。<br>
+                模型接收到的输入是：</p>
+            <div class="math-block">$$ [1, 0] + [10, 0] = [11, 0] $$</div>
+            <p>现在问题来了：当模型拿到 $[11, 0]$ 去预测下一个词时，它必须从 $[11, 0]$ 里<strong>减去</strong> $[10, 0]$ 才能还原出"苹果"的语义 $[1, 0]$。</p>
+            <p>这意味着：模型内部的神经网络必须<strong>学会做减法</strong>——从混在一起的信息中费力地把"位置"和"语义"拆开。如果位置数字很大（比如第 5000 位，$p_{5000}$ 的数值可能高达上百），语义向量 $[1, 0]$ 被彻底淹没，模型根本"抠"不出"苹果"的原意。</p>
+        </div>
+
+        <p><strong>第二个问题：无法外推（Extrapolation）</strong></p>
+
+        <p>模型在训练时只见过 $p_1$ 到 $p_{512}$（假设训练长度是 512）。推理时如果来了 1000 字的文章，第 513 个 token 的位置向量 $p_{513}$ <strong>从未出现在训练数据中</strong>。模型翻遍自己的"参数仓库"，发现没有这个编号，只能随机初始化一个数，导致结果崩盘。</p>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏙️ 城市隐喻</span>
+            绝对位置编码就像给每栋建筑贴一个"全国统一编号"的牌子——1号楼、2号楼、3号楼……但模型只见过编号 1~512 的楼。当你带它去一座有 1000 栋楼的新城市，看到 513 号楼的牌子时，它彻底懵了："这个编号我从来没学过，这楼在哪？"
+        </div>
+
+        <h4>2.2 方案 B：相对位置编码（T5 Relative Bias）</h4>
+
+        <p>T5 换了个思路：不关心"你绝对在第几位"，而是关心"你俩相隔多远"。它在 Attention 内积后面<strong>额外加一个偏置项</strong> $b_{m-n}$：</p>
+
+        <div class="math-block">
+            $$ q_m^T k_n + b_{m-n} $$
+        </div>
+
+        <p>这里的 $b_{m-n}$ 是一个<strong>需要学习的参数表</strong>。比如距离为 1（相邻），$b_1 = 0.5$；距离为 2，$b_2 = 0.3$。</p>
+
+        <div class="card-important">
+            <span class="card-title">"尺子不够长"的致命问题</span>
+            <p>训练时，T5 只准备了 $b_0$ 到 $b_{128}$（最大距离 128）。这就像带了一把 10 厘米的尺子去量距离。<br>
+                推理时，如果两个词相隔 500 个位置，模型需要查 $b_{500}$——尺子上根本没有这个刻度，只能报错或随机蒙一个数。</p>
+        </div>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏙️ 城市隐喻</span>
+            相对位置编码就像手里拿了一把刻度有限的软尺——它能量"这栋楼离我 3 步远"，但如果两栋楼相隔 500 步，尺子不够长，就只能瞎猜了。
+        </div>
+
+        <p><strong>总结</strong>：方案 A（贴牌）和方案 B（尺子）都死于同一个原因——<strong>训练长度之外的位置/距离完全没有定义</strong>。</p>
+
+        <div class="card-summary">
+            <span class="card-title">💡 一句话理解本章</span>
+            老方案要么"记绝对编号"（贴牌），要么"记相对距离"（尺子），但都有一个共同死穴——训练时没见过的长度，推理时就彻底抓瞎。
+        </div>
+
+        <div class="card-check">
+            <span class="card-title">🧠 自检一下</span>
+            <ol>
+                <li>绝对位置编码的"加法"为什么是一种"信息混合"？它给模型带来了什么额外负担？</li>
+                <li>相对位置编码比绝对位置编码好在哪里？为什么它还是不够？</li>
+                <li>两种方案的共同死穴是什么？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <!-- 第三章 -->
+        <h3>第三章：RoPE（旋转位置编码）——革命性突破</h3>
+
+        <h4>3.1 RoPE 的核心假设</h4>
+
+        <p>苏剑林等人（2021）提出了一个优雅的假设：<strong>位置信息不应该"加"到 embedding 上，而应该"旋转"它</strong>。</p>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏙️ 城市隐喻（表盘指针）</span>
+            <p>把"苹果"这个词想象成城市地图上的一根<strong>指针</strong>。</p>
+            <ul>
+                <li><strong>指针的长度</strong> = "苹果"的语义（词义强弱，也就是这个地方有多重要）。</li>
+                <li><strong>指针的角度</strong> = "苹果"的位置（在城市的哪个方位）。</li>
+            </ul>
+            <p>当"苹果"在第 1 位时，指针指向 10°；当它在第 2 位时，指针指向 20°。<strong>旋转改变了角度，但不改变指针的长度</strong>。语义（长度）和位置（角度）在几何上天然解耦，模型再也不需要费力"拆开"了。</p>
+        </div>
+
+        <h4>3.2 数学推导（附逐项手算解读）</h4>
+
+        <p><strong>步骤 1：将向量视为复数</strong></p>
+
+        <p>设隐藏维度为 $|D|$（必须是偶数）。我们把每两个维度 $(x_{2i}, x_{2i+1})$ 组合成一个复数：</p>
+
+        <div class="math-block">
+            $$ z = x_{2i} + i \cdot x_{2i+1} $$
+        </div>
+
+        <div class="card-note">
+            <span class="card-title">为什么用复数？</span>
+            复数乘法天然包含旋转。一个复数乘以 $e^{i\theta}$，相当于在复平面上旋转 $\theta$ 角度。这是 RoPE 能用"旋转"编码位置的几何基础。
+        </div>
+
+        <p><strong>步骤 2：定义旋转频率（灵魂参数）</strong></p>
+
+        <p>对第 $d$ 个维度对，定义旋转频率：</p>
+
+        <div class="math-block">
+            $$ \theta_d = b^{-2d/|D|}, \quad b = 10000 $$
+        </div>
+
+        <div class="card-example">
+            <span class="card-title">🔍 手算实例（这是理解 RoPE"齿轮组"的关键）</span>
+            <p>假设模型维度 $|D| = 8$（简化为 4 组二维对，$d = 0, 1, 2, 3$）。</p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>维度对索引 $d$</th><th>频率 $\theta_d = 10000^{-2d/8}$</th><th>数值</th><th>物理含义</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>0</td><td>$10000^{0}$</td><td><strong>1.0</strong></td><td>位置每+1，旋转 <strong>1 弧度（57°）</strong>。转得飞快！</td></tr>
+                        <tr><td>1</td><td>$10000^{-0.25}$</td><td>≈ <strong>0.1</strong></td><td>位置每+1，旋转 0.1 弧度。中速。</td></tr>
+                        <tr><td>2</td><td>$10000^{-0.5}$</td><td><strong>0.01</strong></td><td>位置每+1，旋转 0.01 弧度。慢速。</td></tr>
+                        <tr><td>3</td><td>$10000^{-0.75}$</td><td>≈ <strong>0.001</strong></td><td>位置每+1，旋转 0.001 弧度。<strong>极慢</strong>，转一圈需要 6283 步。</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏙️ 城市隐喻——乐队指挥的视角</span>
+            <ul>
+                <li><strong>高频维度（d=0，小提琴）</strong>：负责捕捉<strong>紧挨着的两个词</strong>（如"不"和"是"组成"不是"）。就像城市里的街道门牌，转得快，相邻位置的夹角极大，模型一眼就能分辨谁在前谁在后。</li>
+                <li><strong>低频维度（d=3，大提琴）</strong>：负责捕捉<strong>远距离的篇章结构</strong>（如"第一章"和"第五章"）。就像城市的大分区，转得慢，远距离才转出一个可识别的角度。</li>
+            </ul>
+            <p>高低频维度各司其职，像一支管弦乐队——小提琴负责细节，大提琴负责基底，合奏出完整的"位置交响乐"。</p>
+        </div>
+
+        <p><strong>步骤 3：旋转矩阵与旋转后的 Q、K</strong></p>
+
+        <p>对位置 $m$，旋转矩阵为：</p>
+
+        <div class="math-block">
+            $$ R(m, \theta_d) = \begin{pmatrix} \cos(m\theta_d) &amp; -\sin(m\theta_d) \\ \sin(m\theta_d) &amp; \cos(m\theta_d) \end{pmatrix} $$
+        </div>
+
+        <p>把 Query 和 Key 分别旋转：</p>
+
+        <div class="math-block">
+            $$ \tilde{q}_m = R(m, \theta) \cdot W_q x_m, \quad \tilde{k}_n = R(n, \theta) \cdot W_k x_n $$
+        </div>
+
+        <p><strong>步骤 4：旋转后内积的"魔法时刻"（平移不变性的数学证明）</strong></p>
+
+        <p>旋转后的 Query 和 Key 做内积，推导结果如下：</p>
+
+        <div class="math-block">
+            $$ \tilde{q}_m^T \tilde{k}_n = \text{Re}\left( (W_q x_m)^* \cdot (W_k x_n) \cdot e^{i\theta(m-n)} \right) $$
+        </div>
+
+        <div class="card-note">
+            <span class="card-title">🔍 精读公式</span>
+            <p>仔细观察指数项 $e^{i\theta(m-n)}$。自变量是 <strong>$(m-n)$</strong>，即<strong>相对距离</strong>。绝对位置 $m$ 和 $n$ 被完美抵消了！</p>
+            <p><strong>翻译成人话</strong>：</p>
+            <ul>
+                <li>"打"在位置 2，"我"在位置 1，距离 $m-n = 1$，旋转角度 $\theta \times 1$。</li>
+                <li>"打"在位置 102，"我"在位置 101，距离仍然是 1，旋转角度依然是 $\theta \times 1$。</li>
+            </ul>
+            <p>无论"打"和"我"出现在句子的开头还是结尾，<strong>只要相隔 1 步，它们的旋转夹角完全一致</strong>。模型学到的是"相对逻辑"，而不是"绝对坐标"。</p>
+        </div>
+
+        <h4>3.3 RoPE 的致命弱点（引出后续三大技术）</h4>
+
+        <p>虽然公式能算出任意角度（$m-n = 5000$ 时，$e^{i\theta \times 5000}$ 可以当场计算），但<strong>预训练的神经网络权重只在训练长度 $L$ 内见过对应的旋转角度</strong>。</p>
+
+        <div class="card-metaphor">
+            <span class="card-title">"方向盘打过头"的类比</span>
+            <p>模型在训练时只在 0°~90° 范围内练过打方向盘（对应长度 4K）。<br>
+                推理时遇到 100K 长文本，需要打到 720°。虽然方向盘物理上能转，但模型<strong>从来没练过这么大的角度</strong>，不知道这个角度对应的是"很近"还是"很远"，注意力权重彻底乱套。</p>
+        </div>
+
+        <p>这就是<strong>长度外推失败</strong>的根源：$\theta(m-n)$ 超出训练分布，模型无法正确解读。</p>
+
+        <h4>3.4 典型应用场景</h4>
+
+        <p>RoPE 是目前绝大多数主流大模型的默认位置编码方案，包括 Llama 系列、ChatGLM、Qwen 等。它的应用场景覆盖了所有需要中等长度上下文的任务：</p>
+        <ul>
+            <li><strong>对话系统</strong>：几十轮到上百轮的多轮对话</li>
+            <li><strong>文档摘要</strong>：几千字的文章摘要</li>
+            <li><strong>代码生成</strong>：单文件或小项目的代码理解</li>
+        </ul>
+
+        <div class="card-summary">
+            <span class="card-title">💡 一句话理解本章</span>
+            RoPE 用语义向量的"旋转角度"编码位置，让内积只依赖相对距离——这是位置编码从"绝对坐标"到"相对关系"的范式跃迁。但它的瓶颈在于：训练时没见过的大角度，推理时模型依然读不懂。
+        </div>
+
+        <div class="card-check">
+            <span class="card-title">🧠 自检一下</span>
+            <ol>
+                <li>RoPE 为什么用"旋转"而不是"加法"来注入位置信息？这解决了绝对位置编码的什么问题？</li>
+                <li>为什么说 RoPE 的高频维度像"小提琴"、低频维度像"大提琴"？它们各自负责什么？</li>
+                <li>RoPE 的公式可以算出任意距离的旋转角度，为什么还会有"外推失败"的问题？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <!-- ============ 下篇 ============ -->
+        <h2>下篇：YaRN · DCA · iRoPE——三条技术路线的全面对决</h2>
+
+        <!-- 第四章 -->
+        <h3>第四章：YaRN（Yet another RoPE extensioN）——频率域的智能手术刀</h3>
+
+        <h4>4.1 背景：RoPE 的"位置失忆症"</h4>
+
+        <p>接上文的"旋转罗盘"类比：预训练时，模型只在直径 4K 的"舞池"里练过旋转。每个维度 $d$ 的旋转角度范围是 $[0, L \cdot \theta_d]$。当舞池突然扩大到 128K，所有角度都超出了经验范围，模型就"迷路"了。</p>
+
+        <p>这就是<strong>长度外推失败</strong>的本质：RoPE 的相对位置矩阵出现了预训练时从未见过的角度。</p>
+
+        <h4>4.2 核心问题</h4>
+
+        <p>如何把 128K 的"大舞池"映射回模型熟悉的 4K"小舞池"范围，同时<strong>不让小舞池里的精细舞步糊成一团</strong>？</p>
+
+        <h4>4.3 老方案及其问题：Position Interpolation（PI）——"一刀切"的拉伸</h4>
+
+        <p>PI 的思路极其朴素：把所有位置索引除以缩放因子 $s$（如 $s=32$，即 4K→128K）。</p>
+
+        <div class="math-block">
+            $$ m' = \frac{m}{s} $$
+        </div>
+
+        <div class="card-important">
+            <span class="card-title">"整张地图缩小 32 倍"的灾难</span>
+            <p>假设 $s = 32$，原来相邻的两个位置（距离 1）变成 $1/32 \approx 0.03$。高频维度（$d=0$，$\theta_0 = 1$）原来位置+1 转 57°，现在只转 $1/32 \approx 1.8°$。</p>
+            <p>模型连"第 5 个词和第 6 个词谁在前"都分不清了——<strong>短距离精确性被彻底毁灭</strong>。</p>
+        </div>
+
+        <p>PI 的根本错误在于：<strong>它对所有维度一视同仁</strong>，而 RoPE 的不同维度视野完全不同。</p>
+
+        <h4>4.4 新方案核心假设</h4>
+
+        <p>YaRN 建立在两个洞察上：</p>
+        <ol>
+            <li><strong>频率分层假设</strong>：RoPE 的不同频率维度职责不同。波长 $\lambda &lt; L$ 的<strong>高频维度</strong>管局部精细位置，不应被插值；波长 $\lambda \geq L$ 的<strong>低频维度</strong>管全局结构，可以安全插值。</li>
+            <li><strong>注意力散焦假设</strong>：上下文越长，attention softmax 的分布越平坦（entropy 增大），模型难以聚焦关键 token，需要"调焦"。</li>
+        </ol>
+
+        <h4>4.5 数学推导与架构设计</h4>
+
+        <p><strong>步骤 1：计算每个维度的"波长"——给 RoPE 维度量体裁衣</strong></p>
+
+        <p>RoPE 第 $d$ 个维度的旋转频率为：</p>
+        <div class="math-block">$$ \theta_d = b^{-2d/|D|} $$</div>
+
+        <p>对应的波长（转一圈需要的 token 数）为：</p>
+        <div class="math-block">$$ \lambda_d = \frac{2\pi}{\theta_d} = 2\pi \cdot b^{2d/|D|} $$</div>
+
+        <div class="card-note">
+            <span class="card-title">🔍 为什么这样设计？</span>
+            <p>波长描述了该维度"视野"的大小。高频维度（$d$ 小）波长只有几个 token，专门分辨"你在我前面还是后面"；低频维度（$d$ 大）波长上万个 token，专门感知"我们在文章的哪个大段落"。</p>
+        </div>
+
+        <p>定义比值 $r(d) = L / \lambda_d$——它告诉我们"预训练上下文是这波长的多少倍"。</p>
+
+        <p><strong>步骤 2：Ramp 函数——高频保真，低频插值</strong></p>
+
+        <p>引入 ramp 函数 $\gamma(r)$，在 $\alpha$ 和 $\beta$ 之间线性过渡：</p>
+
+        <div class="math-block">
+            $$ \gamma(r) = \begin{cases} 0, &amp; r &lt; \alpha \\ 1, &amp; r &gt; \beta \\ \frac{r-\alpha}{\beta-\alpha}, &amp; \text{otherwise} \end{cases} $$
+        </div>
+
+        <p>调整后的频率为：</p>
+
+        <div class="math-block">
+            $$ h(\theta_d) = \bigl(1 - \gamma(r(d))\bigr) \cdot \frac{\theta_d}{s} + \gamma(r(d)) \cdot \theta_d $$
+        </div>
+
+        <div class="card-note">
+            <span class="card-title">🔍 为什么这样设计？</span>
+            <p>当 $r &lt; \alpha$（高频，波长远小于上下文）：$\gamma=0$，完全插值 $\theta_d/s$——这些维度反正只感知局部，稍微压缩不影响大局。</p>
+            <p>当 $r &gt; \beta$（低频，波长大于上下文）：$\gamma=1$，完全不插值——这些维度的"视野"本来就比预训练长度还长，强行压缩只会丢失全局结构信息。</p>
+            <p>中间区域：线性过渡，避免硬切换带来的边界震荡。</p>
+        </div>
+
+        <div class="card-example">
+            <span class="card-title">🔍 精读公式的逻辑（三阶段手算）</span>
+            <p>假设预训练长度 $L=4096$，缩放因子 $s=32$。</p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>维度 $d$</th><th>波长 $\lambda_d$</th><th>$r = L/\lambda_d$</th><th>$\gamma(r)$</th><th>实际操作为</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>0（高频）</td><td>6.28</td><td>$4096/6.28 \approx 652$</td><td>1（因为 $&gt;32$）</td><td><strong>不插值</strong>：保持 $\theta_0$</td></tr>
+                        <tr><td>2（中频）</td><td>~628</td><td>$4096/628 \approx 6.5$</td><td>0.18（线性过渡）</td><td>轻微插值</td></tr>
+                        <tr><td>3（低频）</td><td>6283</td><td>$4096/6283 \approx 0.65$</td><td>0（因为 $&lt;1$）</td><td><strong>完全插值</strong>：变为 $\theta_3/32$</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <p>结果：<strong>高频小提琴（d=0）毫发无伤</strong>，精确分辨相邻词；<strong>低频大提琴（d=3）</strong>被安全压缩，适应了长文本。这就是"街道名字保持清晰，城市边界按比例缩小"的数学实现。</p>
+        </div>
+
+        <p>对 LLaMA 系列，实验确定 $\alpha=1, \beta=32$ 为较优值。</p>
+
+        <p><strong>步骤 3：Attention 温度缩放——给注意力"调焦"</strong></p>
+
+        <p>在 attention softmax 中引入温度参数 $t$：</p>
+
+        <div class="math-block">
+            $$ \text{softmax}\left(\frac{q_m^\top k_n}{t \cdot \sqrt{|D|}}\right) $$
+        </div>
+
+        <p>通过实验拟合发现最优温度与缩放因子 $s$ 满足对数线性关系：</p>
+
+        <div class="math-block">
+            $$ \frac{1}{\sqrt{t}} = 0.1 \cdot \ln(s) + 1 $$
+        </div>
+
+        <div class="card-metaphor">
+            <span class="card-title">☕ 咖啡因注射的比喻</span>
+            <p>想象你是一个<strong>夜间长途货车司机</strong>（模型），需要连续监控 100 公里长的公路（长文本）。</p>
+            <ul>
+                <li><strong>短文本时（4K）</strong>：你精神抖擞，能清晰分辨每个路标和弯道（attention 分布尖锐，聚焦关键 token）。</li>
+                <li><strong>长文本时（128K）</strong>：开了 10 个小时夜车，你的注意力开始<strong>涣散</strong>——每 1 公里的路况看起来都差不多，你分不清哪个弯道是急弯、哪个路标是限速（softmax 趋近均匀分布，模型看什么都一样重要）。</li>
+            </ul>
+            <p><strong>温度缩放</strong>的作用，就是给模型<strong>注射一针咖啡因</strong>：</p>
+            <ul>
+                <li>温度参数 $t$ 越小，相当于咖啡因剂量越大。</li>
+                <li>公式 $1/\sqrt{t} = 0.1 \cdot \ln(s) + 1$ 告诉我们：<strong>路越长（扩展倍数 $s$ 越大），咖啡因剂量越强</strong>。</li>
+            </ul>
+            <p><strong>效果演示（代入数字）</strong>：</p>
+            <ul>
+                <li>无咖啡因（无温度缩放）：logits 10 和 12，Softmax 后权重比约为 $e^{12}/e^{10} = e^2 \approx 7.4$ 倍，勉强能区分。</li>
+                <li>有咖啡因（$t=0.55$，对应 $s=32$）：logits 变成 $10/0.55 \approx 18.2$ 和 $12/0.55 \approx 21.8$。Softmax 后权重比约为 $e^{21.8}/e^{18.2} = e^{3.6} \approx 36.6$ 倍！<strong>区分度放大了近 5 倍</strong>，模型重新锐利起来，能清晰抓住关键信息。</li>
+            </ul>
+            <p>这就是温度缩放的本质：<strong>序列越长，注意力越容易"犯困"，温度缩放就是那针让模型重新"醒"过来的咖啡因。</strong></p>
+        </div>
+
+        <div class="card-note">
+            <span class="card-title">🔍 为什么无需修改 Attention 代码？</span>
+            温度缩放可以通过<strong>直接缩放 RoPE 的复数嵌入</strong>实现——将 $q, k$ 的复数表示同时乘以 $1/\sqrt{t}$。由于 RoPE 嵌入是预计算后复用的，这一步零 overhead，且与 Flash Attention 2 原生兼容。
+        </div>
+
+        <h4>4.6 训练与推理的具体计算过程</h4>
+
+        <p><strong>前向计算（以 LLaMA-2 7B 扩展至 128K 为例，$s=32$）</strong></p>
+        <ol>
+            <li><strong>RoPE 频率预计算</strong>：对每一层、每一个头、每一维 $d$，按 YaRN 公式计算 $h(\theta_d)$。高频维度保持原样，低频维度除以 32。</li>
+            <li><strong>位置编码应用</strong>：对输入序列位置 $m \in [0, 127999]$，计算旋转矩阵 $R(m, h(\theta_d))$，分别作用于 $Q$ 和 $K$。</li>
+            <li><strong>Attention 计算</strong>：$$ A = \text{softmax}\left(\frac{QK^\top}{t \cdot \sqrt{d_k}} + \text{mask}\right) V $$ 其中 $t$ 按 $s=32$ 预先计算（$1/\sqrt{t} \approx 1.35$）。</li>
+            <li>后续 FFN、LayerNorm 等保持不变。</li>
+        </ol>
+
+        <p><strong>后向计算（继续预训练）</strong></p>
+        <p>YaRN 的训练是<strong>继续预训练（continual pretraining）</strong>：</p>
+        <ul>
+            <li><strong>数据</strong>：PG19 书籍语料，分块为 64K token（即使目标扩展为 128K，训练数据也可短于目标长度）。</li>
+            <li><strong>优化器</strong>：AdamW，lr=$2\times 10^{-5}$，无 weight decay，20 steps warmup。</li>
+            <li><strong>训练量</strong>：仅 400 steps，全局 batch size 64，约消耗原始预训练数据的 <strong>0.1%</strong>。</li>
+            <li><strong>温度参数 $t$</strong>：是超参数，不参与梯度更新。</li>
+        </ul>
+
+        <p><strong>关键发现——迁移学习</strong>：先用 $s=16$ 训练 400 steps，再在此基础上用 $s=32$ 继续训练 200 steps 即可达到 128K 扩展。$s=32$ 模型在仅见 64K 训练数据时，可成功 extrapolate 至 128K。</p>
+
+        <p><strong>推理过程</strong></p>
+        <ul>
+            <li><strong>静态缩放</strong>：直接使用训练时确定的 $s$ 值（如 $s=16$ 或 $32$），所有位置按固定比例插值。</li>
+            <li><strong>Dynamic Scaling（动态缩放，免训练推理）</strong>：在 KV-cache 场景下，每步根据当前序列长度 $l'$ 动态调整：$$ s = \max\left(1, \frac{l'}{L}\right) $$ 这要求 KV-cache 存储<strong>未施加 RoPE 的原始 $K, V$</strong>，在每步前向传播时重新应用当前 $s$ 对应的 RoPE。这使得模型在序列长度 $&lt;L$ 时保持原始性能，超过 $L$ 时平滑退化而非突然崩溃。</li>
+        </ul>
+
+        <h4>4.7 具体收益与对比</h4>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>维度</th><th>Position Interpolation（基线）</th><th>YaRN</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>缩放策略</td><td>所有维度同等压缩</td><td>高频保真、低频插值（NTK-by-parts）</td></tr>
+                    <tr><td>注意力分布</td><td>随长度增加而涣散</td><td>温度缩放重新锐化</td></tr>
+                    <tr><td>训练需求</td><td>需微调（较多数据）</td><td>仅需 ~0.1% 原始数据，400 steps</td></tr>
+                    <tr><td>短上下文退化</td><td>有（高频被过度压缩）</td><td>几乎无退化</td></tr>
+                    <tr><td>扩展能力</td><td>~8K–16K</td><td>128K（实测），支持 extrapolation</td></tr>
+                    <tr><td>兼容性</td><td>需修改位置编码</td><td>零 overhead，Flash Attention 原生兼容</td></tr>
+                    <tr><td>Passkey Retrieval</td><td>—</td><td>128K 长度下准确率 $&gt;99\%$</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-example">
+            <span class="card-title">具体实例</span>
+            将 LLaMA-2-7B（4K 上下文）扩展为支持 128K 代码理解的模型。在 PG19 代码/书籍混合数据上继续训练 400 steps（batch 64）。推理时启用 Dynamic Scaling：用户输入 50K token 代码库时，$s$ 自动调整为 $50000/4096 \approx 12.2$。在 passkey retrieval 任务中（在 128K 上下文中隐藏一个 5 位数密码），YaRN 模型准确率 $&gt;99\%$。
+        </div>
+
+        <h4>4.8 🔧 实践踩坑指南</h4>
+
+        <div class="card-tip">
+            <span class="card-title">1. Ramp 函数的 α/β 怎么调？</span>
+            <ul>
+                <li>默认值 $\alpha=1, \beta=32$ 是经验值，适用于大多数 4K→128K 的场景。</li>
+                <li>如果短上下文性能下降明显（说明高频被压缩了），可以增大 $\beta$，让更多维度保持原样。</li>
+                <li>如果长上下文 PPL 偏高（说明低频插值不够），可以减小 $\alpha$，让更多维度参与插值。</li>
+            </ul>
+        </div>
+
+        <div class="card-tip">
+            <span class="card-title">2. 温度缩放公式的适用范围</span>
+            <ul>
+                <li>公式 $1/\sqrt{t} = 0.1 \cdot \ln(s) + 1$ 是实验拟合的，在 $s \leq 32$ 时效果较好。</li>
+                <li>当扩展倍数更大（如 s=64 或更高），建议自己做小规模实验拟合最佳温度。</li>
+                <li>温度缩放是"锦上添花"，不是"雪中送炭"——核心还是频率插值。</li>
+            </ul>
+        </div>
+
+        <div class="card-tip">
+            <span class="card-title">3. 微调数据量真的只需要 0.1% 吗？</span>
+            <ul>
+                <li>是的，YaRN 论文报告微调约 400 步即可收敛。</li>
+                <li>但数据质量很重要——尽量使用真实的长文本数据（书籍、长文章），而不是拼接的短文本。</li>
+            </ul>
+        </div>
+
+        <div class="card-summary">
+            <span class="card-title">💡 一句话理解本章</span>
+            YaRN 是一把"频率域的手术刀"——高频维度（负责细节）原样保留，低频维度（负责全局）安全压缩，再用温度缩放对抗注意力涣散，用极小的微调成本换来了 32 倍的上下文扩展。
+        </div>
+
+        <div class="card-check">
+            <span class="card-title">🧠 自检一下</span>
+            <ol>
+                <li>为什么 PI（线性插值）会毁灭短距离精确性？它对所有维度做了什么错误的事情？</li>
+                <li>YaRN 的 Ramp 函数在做什么？为什么说它是"高频保真、低频插值"？</li>
+                <li>温度缩放解决的是什么问题？为什么序列越长，需要的"咖啡因"越多？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <!-- 第五章 -->
+        <h3>第五章：DCA（Dual Chunk Attention）——完全免训练的位置置换魔术</h3>
+
+        <h4>5.1 背景：位置越界的"交通违规"</h4>
+
+        <p>LLaMA2 在 4K 上下文上训练，它的 RoPE 只认识 $0$ 到 $4095$ 之间的"相对距离"。当输入 100K token 时，相对位置矩阵里出现了 $4096, 4097, \dots, 99999$ 这些"陌生坐标"——就像司机只学过市内交规，突然上了高速看到 120km/h 的限速牌，完全不会处理了。</p>
+
+        <p>此前的训练-free 方法（如 PI、NTK）试图通过"压缩坐标"让陌生坐标变熟悉，但超过 2 倍训练长度后 perplexity 就急剧上升。直接截断（StreamingLLM）虽然零训练，但丢失了长距离依赖。</p>
+
+        <h4>5.2 核心问题</h4>
+
+        <p><strong>不修改模型任何参数</strong>，如何让 100K 序列中任意两个 token 的"相对距离"始终落在模型认识的 $[0, 4095]$ 范围内？</p>
+
+        <h4>5.3 老方案及其问题</h4>
+
+        <ul>
+            <li><strong>直接截断（StreamingLLM）</strong>：只保留最近 4K token，之前全丢弃。问题：丢失了长距离依赖——模型读不完一本书就忘了开头。</li>
+            <li><strong>PI/NTK 插值</strong>：把 100K 压缩到 4K。问题：超过 8K 后 PPL 显著上升；压缩过度导致精细位置模糊。</li>
+        </ul>
+
+        <h4>5.4 新方案核心假设</h4>
+
+        <p>DCA 的洞见极其简洁：</p>
+        <ol>
+            <li><strong>位置有界假设</strong>：只要相对位置矩阵的所有元素 $\leq$ 预训练长度 $c$，模型就能正常工作。</li>
+            <li><strong>局部性假设</strong>：LLM 强烈依赖邻近 token 做预测，相邻块边界的位置精度必须保护。</li>
+            <li><strong>全局粗粒度假设</strong>：远距离 token 之间不需要精确相对位置，知道"来自远方"就够了。</li>
+        </ol>
+
+        <h4>5.5 数学推导与架构设计</h4>
+
+        <p>设预训练上下文长度为 $c$，分块大小为 $s &lt; c$（如 $c=4096, s=3072$），序列总长为 $l$。</p>
+
+        <div class="card-example">
+            <span class="card-title">🔍 具体序列推演（这是理解 DCA 的关键）</span>
+            <p>假设总长度 $l = 10$（实际可无限延伸），块大小 $s = 4$，预训练长度 $c = 8$（简化）。</p>
+            <ul>
+                <li>第 0~3 个 Token：第 0 块</li>
+                <li>第 4~7 个 Token：第 1 块</li>
+                <li>第 8~9 个 Token：第 2 块</li>
+            </ul>
+        </div>
+
+        <p><strong>（1）Intra-Chunk Attention——块内"本地通话"</strong></p>
+
+        <p>同一块内的 token（$\lfloor i/s \rfloor = \lfloor j/s \rfloor$），位置索引重置为块内相对位置：</p>
+
+        <div class="math-block">
+            $$ P_k = P_q^{\text{intra}} = [\underbrace{0,1,\dots,s-1}_{\text{chunk }0}, \underbrace{0,1,\dots,s-1}_{\text{chunk }1}, \dots] $$
+        </div>
+
+        <p>相对距离：$M[i][j] = P_q^{\text{intra}}[i] - P_k[j]$，最大为 $s-1 &lt; c$。</p>
+
+        <div class="card-note">
+            <span class="card-title">手算验证</span>
+            第 3 个 Token（真实索引 3）和第 2 个 Token（真实索引 2）。块内位置 $3 - 2 =$ <strong>1</strong>，真实距离也是 1。<strong>精确！</strong>
+        </div>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏥 分级医院类比（同诊室）</span>
+            同一诊室的病人，医生精确知道排队顺序——1 号、2 号、3 号。谁在谁前面，清清楚楚。
+        </div>
+
+        <p><strong>（2）Inter-Chunk Attention——远块"长途呼叫"</strong></p>
+
+        <p>对于非相邻块的 token（$\lfloor i/s \rfloor - \lfloor j/s \rfloor &gt; 1$），将所有 query 的位置固定为预训练最大位置 $c-1$：</p>
+
+        <div class="math-block">
+            $$ P_q^{\text{inter}} = [c-1, c-1, \dots, c-1] \quad (\text{长度为 } l) $$
+        </div>
+
+        <p>相对距离：$M[i][j] = (c-1) - P_k[j] \geq c - s$。</p>
+
+        <div class="card-note">
+            <span class="card-title">手算验证</span>
+            块 2 的 Query（位置设为 7）看块 0 的 Key（块内位置是 3）。相对距离 = $7 - 3 = 4$，小于 $c=8$。<strong>完美锁死在合法范围内！</strong>
+        </div>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏥 分级医院类比（跨楼层会诊）</span>
+            医生从别的楼层转来一个病人，只知道"这是从远方转来的"，不关心他在原楼层具体排第几号。对于远距离的信息，粗粒度足够。
+        </div>
+
+        <p><strong>（3）Successive-Chunk Attention——邻块"精准对接"</strong></p>
+
+        <p>相邻块（$\lfloor i/s \rfloor - \lfloor j/s \rfloor = 1$）若用 Inter-Chunk 处理会出问题。比如第一块末尾的 $k_3$（位置 3）和第二块开头的 $q_4$，真实距离为 1，但 Inter-Chunk 给出的距离是 $(c-1) - 3 = 7 - 3 = 4$，完全失真。</p>
+
+        <p>引入局部窗口 $w = c - s$，对相邻块的 query 位置特殊设置：</p>
+
+        <div class="math-block">
+            $$ P_q^{\text{succ}} = [\underbrace{s, s+1, \dots, s+w-1}_{w \text{ 个}}, \underbrace{c-1, \dots, c-1}_{s-w \text{ 个}}] \text{（每块重复）} $$
+        </div>
+
+        <div class="card-note">
+            <span class="card-title">手算验证（延续简化例子）</span>
+            <p>$c=8, s=4, w=4$。</p>
+            <p>块 1 的 Query 位置被赋值为：</p>
+            <div class="math-block">$$ [\underbrace{4, 5, 6, 7}_{w=4 \text{ 个}}] $$</div>
+            <p>块 1 开头的 $q_4$ 被赋值为 4。它看块 0 末尾的 $k_3$（块内位置 3）。相对距离 = $4 - 3 = 1$。<strong>真实距离是 1，完美还原！</strong></p>
+        </div>
+
+        <div class="card-metaphor">
+            <span class="card-title">🏥 分级医院类比（隔壁诊室转诊）</span>
+            隔壁诊室转来的病人中，最近转过来的几个（窗口内），必须精确交接"他原来排在我前面第 2 位"，否则拿错病历。再远一点的转诊病人，就退化为"远方来的"，不再精确。
+        </div>
+
+        <p><strong>DCA 统一公式</strong>：</p>
+
+        <div class="math-block">
+            $$ q_i^\top k_j = \begin{cases} f(q, P_q^{\text{intra}}[i])^\top f(k, P_k[j]), &amp; \text{同块} \\ f(q, P_q^{\text{succ}}[i])^\top f(k, P_k[j]), &amp; \text{相邻块} \\ f(q, P_q^{\text{inter}}[i])^\top f(k, P_k[j]), &amp; \text{远块} \end{cases} $$
+        </div>
+
+        <h4>5.6 推理的具体计算过程（完全免训练）</h4>
+
+        <p>DCA 是<strong>推理时 monkey-patch</strong>，替换标准 LlamaAttention 的前向逻辑：</p>
+        <ol>
+            <li><strong>分块</strong>：输入 100K token，$s=3072$（$&lt;4096$），分为 $\lceil 100000/3072 \rceil = 33$ 块。</li>
+            <li><strong>KV Cache 构建</strong>：每块的 $K, V$ 使用原始 RoPE 位置 $[0, \dots, 3071]$ 计算并缓存。</li>
+            <li><strong>Query 位置映射</strong>：
+                <ul>
+                    <li>对当前块内 token：$P_q^{\text{intra}} = [0, \dots, s-1]$</li>
+                    <li>对当前块与前一块的边界 token：$P_q^{\text{succ}}$ 局部精确</li>
+                    <li>对当前块与更早块的 token：$P_q^{\text{inter}} = [c-1, \dots, c-1]$</li>
+                </ul>
+            </li>
+            <li><strong>Attention Mask 组装</strong>：将三种位置策略编码为等效的相对位置矩阵，输入 Flash Attention 2（单次调用完成，无需实际计算三次 attention）。</li>
+            <li><strong>复杂度</strong>：时间 $O(l \cdot s)$，空间与标准模型相同，无额外内存开销。</li>
+        </ol>
+
+        <h4>5.7 具体收益与对比</h4>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>维度</th><th>PI / NTK（基线）</th><th>DCA</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>修改对象</td><td>位置编码频率</td><td>Attention 位置矩阵</td></tr>
+                    <tr><td>是否需要训练</td><td>需微调</td><td><strong>完全免训练</strong></td></tr>
+                    <tr><td>长距离信息</td><td>压缩后保留但模糊</td><td>通过 Inter-Chunk 保留（粗粒度）</td></tr>
+                    <tr><td>局部性保护</td><td>无特殊处理</td><td>Successive-Chunk 专门保护边界</td></tr>
+                    <tr><td>Flash Attention</td><td>需适配</td><td>单次调用，兼容（需 mask 适配）</td></tr>
+                    <tr><td>代表效果</td><td>8K 后 PPL 上升</td><td>70B 模型 100K 长度 PPL 仅增 0.56</td></tr>
+                    <tr><td>实际任务</td><td>—</td><td>长文档 QA 达到 GPT-3.5-16K 的 94%</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-example">
+            <span class="card-title">具体实例</span>
+            用 LLaMA2-70B（仅 4K 上下文训练）处理一本 80K token 的 PDF 书籍。设置 chunk size $s=3072$，分为 27 个 chunk。当生成第 50000 个 token 的 query 时，对当前 chunk 内 key 使用 $P_q^{\text{intra}}$（精确），对 chunk 15 的 key 使用 $P_q^{\text{succ}}$（保留边界 1024 token 精确距离），对 chunk 0–14 的 key 使用 $P_q^{\text{inter}} = [4095]$（统一标记为"远距离"）。在 NarrativeQA 长文档问答上，ChunkLLaMA2-70B 达到 GPT-3.5-16K 的 94% 性能。
+        </div>
+
+        <h4>5.8 🔧 实践踩坑指南</h4>
+
+        <div class="card-tip">
+            <span class="card-title">1. 块大小 s 和窗口 w 怎么选？</span>
+            <ul>
+                <li>经验比例：$s \approx 0.75c$，$w = c - s$（如 c=4096, s=3072, w=1024）</li>
+                <li>s 越大，块内精确范围越大，但邻块缓冲窗口 w 越小，边界效应越明显</li>
+                <li>s 越小，边界越平滑，但每个块的有效精确范围缩小</li>
+                <li><strong>推荐做法</strong>：先从 0.75c 开始，根据边界任务的效果微调</li>
+            </ul>
+        </div>
+
+        <div class="card-tip">
+            <span class="card-title">2. 远块精度丢失的影响有多大？</span>
+            <ul>
+                <li>对于大多数自然语言任务，远距离依赖本身就是稀疏的——关键信息大多在局部</li>
+                <li>如果你的任务特别依赖超长距离的精确对应（如代码中的变量定义与使用跨了很远），DCA 可能不够，需要考虑 YaRN 或 iRoPE</li>
+            </ul>
+        </div>
+
+        <div class="card-tip">
+            <span class="card-title">3. 和 FlashAttention 的兼容性</span>
+            <ul>
+                <li>DCA 需要修改 Attention 的位置索引逻辑，标准 FlashAttention 不直接支持</li>
+                <li>通常需要自己实现或使用支持自定义位置索引的 Attention 变体</li>
+                <li>推理速度会比原生 Attention 慢一些（因为有分块逻辑），但远好于微调成本</li>
+            </ul>
+        </div>
+
+        <div class="card-summary">
+            <span class="card-title">💡 一句话理解本章</span>
+            DCA 是一套"位置置换魔术"——不碰模型参数，只改位置索引，用"块内精确、邻块缓冲、远块钳制"三套规则，零训练成本实现长上下文扩展，代价是远块精度退化为粗粒度。
+        </div>
+
+        <div class="card-check">
+            <span class="card-title">🧠 自检一下</span>
+            <ol>
+                <li>DCA 的核心思想是什么？它为什么能做到"完全免训练"？</li>
+                <li>三种 Attention 模式（Intra/Inter/Succ）分别解决什么场景的问题？</li>
+                <li>为什么邻块边界需要特殊处理？如果粗暴使用 Inter-Chunk 会出什么问题？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <!-- 第六章 -->
+        <h3>第六章：iRoPE（Interleaved RoPE）——冲击 10M 上下文的认知重构</h3>
+
+        <h4>6.1 三重极限困境</h4>
+
+        <p>当目标扩展到 <strong>10M token</strong>（如 Llama 4 Scout），此前所有方法都触及天花板：</p>
+        <ol>
+            <li><strong>插值极限</strong>：YaRN 的 $s = 10M/256K \approx 40$，频率压缩过度，位置信息几乎糊成一片。</li>
+            <li><strong>注意力涣散</strong>：标准 softmax attention 在 $n=10^7$ 时，分母求和项巨大，attention 分布趋于均匀——模型无法聚焦任何 token。</li>
+            <li><strong>计算爆炸</strong>：10M 的全量 attention 在内存和计算上不可行。</li>
+        </ol>
+
+        <h4>6.2 老方案及其问题</h4>
+
+        <ul>
+            <li><strong>YaRN</strong>：$s=40$ 时高频维度已被压缩到几乎失效。</li>
+            <li><strong>DCA</strong>：分块可处理位置，但全量 attention 的 KV 缓存和计算量仍随长度平方增长。</li>
+            <li><strong>纯 NoPE（无位置编码）</strong>：Kazemnejad 等发现 NoPE 在长度泛化上反而优于显式编码，但完全去掉位置编码又丢失了局部词序信息。</li>
+        </ul>
+
+        <h4>6.3 新方案核心假设</h4>
+
+        <p>iRoPE 的破局思路是<strong>质疑一个从未被质疑的默认</strong>——"每一层 Transformer 都必须有位置编码"。</p>
+        <ol>
+            <li><strong>层间分工假设</strong>：不同层对位置的需求不同。部分层需要精确局部位置（语法、词序），部分层只需要全局语义关系（主题、篇章结构）。</li>
+            <li><strong>NoPE 无限泛化假设</strong>：无位置编码的层天然不受长度限制，可通过内容相似性建立长距离关联。</li>
+            <li><strong>对数锐化假设</strong>：为防止注意力涣散，attention logits 需按 $\log n$ 比例放大。</li>
+        </ol>
+
+        <h4>6.4 数学推导与架构设计</h4>
+
+        <p><strong>步骤 1：层间交替——RoPE 管局部，NoPE 管全局</strong></p>
+
+        <p>iRoPE 采用周期性层间交替：</p>
+        <ul>
+            <li><strong>RoPE 层</strong>（约 3/4 层）：使用标准 RoPE，但配合 <strong>Chunked Attention</strong>（块大小 8K），处理局部位置关系。</li>
+            <li><strong>NoPE 层</strong>（约 1/4 层，如每第 4 层）：<strong>完全去除位置编码</strong>，使用全量 causal attention，让模型通过内容本身学习全局语义关联。</li>
+        </ul>
+
+        <div class="card-metaphor">
+            <span class="card-title">🚗 市内导航 + 高铁网络的类比</span>
+            <ul>
+                <li><strong>RoPE 层（市内导航）</strong>：精确到每条街道，但只看 8K 范围。告诉你"从朝阳门到东直门怎么走"，对短距离路径精确无误。</li>
+                <li><strong>NoPE 层（高铁网络）</strong>：不关心街道名，只连接"北京→上海→广州"。它通过内容语义（"问题"和"答案"这两个词本身）建立远距离依赖，不需要任何坐标。</li>
+            </ul>
+            <p>NoPE 层的 Attention 计算 $QK^T$ 中不包含任何 $m\theta$ 或 $n\theta$。因此它<strong>天然不受 RoPE 外推极限约束</strong>——无论相隔 100 还是 10M 个 token，只要"问题"和"答案"在语义空间相似，NoPE 层就能直接建立连接。</p>
+        </div>
+
+        <p><strong>步骤 2：SSMax（Scalable Softmax）——对抗 10M 长度的数学武器</strong></p>
+
+        <p>标准 Attention：</p>
+        <div class="math-block">$$ \text{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right) $$</div>
+
+        <p>SSMax 将 logits 乘以 $s \cdot \log n$：</p>
+
+        <div class="math-block">
+            $$ \text{SSMax}(x_i) = \frac{e^{x_i \cdot s \cdot \log n}}{\sum_j e^{x_j \cdot s \cdot \log n}} $$
+        </div>
+
+        <p>等价于对 query 进行缩放：</p>
+
+        <div class="math-block">
+            $$ \tilde{q}_{h,i} = q_{h,i} \cdot s_h \cdot \log n $$
+        </div>
+
+        <p>其中 $s_h$ 是<strong>每头可学习参数</strong>，通过 $\text{softplus}(s_{\text{logit}}) + 0.5$ 参数化，初始 $s \approx 1.19$。</p>
+
+        <div class="card-metaphor">
+            <span class="card-title">🔦 聚光灯的比喻</span>
+            <p>想象你是一个<strong>舞台剧导演</strong>（模型），舞台上有 10,000 名演员（长文本）。每个演员的重要程度就是 logits。</p>
+            <ul>
+                <li><strong>无聚光灯（标准 Softmax）</strong>：舞台灯光均匀地打在每个人身上，你根本看不清谁是主角、谁是群演。你的注意力被<strong>平均分摊</strong>——每个演员只分到你 $1/10000$ 的注意力（softmax 趋近均匀分布），主角和龙套在你眼中几乎一样模糊。</li>
+            </ul>
+            <p><strong>SSMax 的作用</strong>，就是给模型<strong>打一盏聚光灯</strong>：</p>
+            <ul>
+                <li>聚光灯的聚焦强度 = $s \cdot \log n$。</li>
+                <li>公式告诉我们：<strong>演员越多（序列越长 $n$ 越大），聚光灯收得越窄</strong>。</li>
+            </ul>
+            <p><strong>效果演示（代入数字）</strong>：</p>
+            <ul>
+                <li><strong>无聚光灯</strong>：均值 logits 10，主角 logits 12（仅比均值高 2）。Softmax 后权重比约为 $e^{12}/e^{10} = e^2 \approx 7.4$ 倍——导演勉强觉得他"稍微重要一点"，但几乎被淹没在人群里。</li>
+                <li><strong>有聚光灯（$n=10^7$，$\log n \approx 16$，$s=1.19$，总放大倍数 $\approx 19$）</strong>：均值 logits 变成 $10 \times 19 = 190$，主角变成 $12 \times 19 = 228$。Softmax 后权重比为 $e^{228}/e^{190} = e^{38} \approx 3.2 \times 10^{16}$ 倍！</li>
+            </ul>
+            <p><strong>结论</strong>：聚光灯让主角（重要 token）的注意力权重从"几乎看不见"变成了"亮如灯塔"。序列越长（$\log n$ 越大），聚焦越强，完美对抗了长文本的注意力涣散。</p>
+        </div>
+
+        <p><strong>步骤 3：推理温度缩放——双重保险</strong></p>
+
+        <p>在 Llama 4 推理中，额外引入动态温度缩放：</p>
+
+        <div class="math-block">
+            $$ \text{softmax}\left(\frac{QK^\top}{\tau \cdot \sqrt{d_k}}\right) $$
+        </div>
+
+        <p>$\tau$ 随序列长度动态调整，与 SSMax 形成双重保险，防止极端长度下的数值下溢和分布坍缩。</p>
+
+        <div class="card-note">
+            <span class="card-title">🔍 为什么这样设计？</span>
+            SSMax 在训练时学习固定模式，但推理长度可能远超训练长度（10M vs 256K）。温度缩放作为动态后处理，在推理时根据实际长度实时微调，防止极端长度下的数值下溢和分布坍缩。
+        </div>
+
+        <h4>6.5 训练与推理的具体计算过程</h4>
+
+        <p><strong>训练前向计算</strong></p>
+
+        <p>Llama 4 Scout 在 <strong>256K 上下文</strong> 上进行预训练和后训练：</p>
+        <ol>
+            <li><strong>层间路由</strong>：
+                <ul>
+                    <li>RoPE 层：位置 $m$ 按 8K 块循环，$P_k = P_q = [0, \dots, 8191]$。</li>
+                    <li>NoPE 层：不施加任何位置旋转，$f(q, m) = W_q x_m$（纯内容驱动）。</li>
+                </ul>
+            </li>
+            <li><strong>SSMax 训练</strong>：在 256K 长度下，$\log n \approx 12.45$，SSMax 自动学习合适的 $s_h$ 使得 attention 分布保持锐利。</li>
+            <li><strong>MoE 路由</strong>：每层通过 router 选择 1 个共享 expert + 1 个 routed expert（Scout 总参数 109B，激活 17B）。</li>
+        </ol>
+
+        <p><strong>训练后向计算</strong></p>
+        <ul>
+            <li><strong>梯度流经 NoPE 层</strong>：由于没有位置编码的约束，NoPE 层的梯度更新更自由，模型学会通过内容相似性（而非位置接近性）建立长距离关联。</li>
+            <li><strong>SSMax 参数学习</strong>：$s_{\text{logit}}$ 通过梯度下降更新，使得不同 head 可以学习不同的锐化强度。</li>
+            <li><strong>RoPE 层</strong>：标准反向传播，但受限于 8K 块大小，梯度只在块内传播（除非通过 NoPE 层间接传递）。</li>
+        </ul>
+
+        <p><strong>推理过程（10M Token）</strong></p>
+        <ol>
+            <li><strong>输入编码</strong>：10M token 输入，在 RoPE 层按 8K 分块处理，NoPE 层处理全序列。</li>
+            <li><strong>KV Cache 管理</strong>：
+                <ul>
+                    <li>RoPE 层：每块独立 KV cache（8K 大小），位置循环复用。</li>
+                    <li>NoPE 层：全局 KV cache，无位置信息，仅靠 causal mask 维持顺序。</li>
+                </ul>
+            </li>
+            <li><strong>SSMax 激活</strong>：当前长度 $n = 10^7$，$\log n \approx 16.12$，SSMax 自动将 logits 放大 $s \cdot 16.12$ 倍。</li>
+            <li><strong>Attention 计算</strong>：
+                <ul>
+                    <li>RoPE 层：$O(8K \times 8K)$ 每块，总计算量线性于序列长度。</li>
+                    <li>NoPE 层：$O(10M \times 10M)$ 全量 attention，但仅 1/4 层，且通过稀疏化/优化实现。</li>
+                </ul>
+            </li>
+            <li><strong>推理温度缩放</strong>：额外引入动态温度 $\tau$ 随长度调整，与 SSMax 形成双重保险，防止极端长度下的数值下溢。</li>
+        </ol>
+
+        <h4>6.6 具体收益与对比</h4>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>维度</th><th>YaRN / DCA（基线）</th><th>iRoPE</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>核心思路</td><td>修改位置编码以适应长度</td><td><strong>部分层直接去掉位置编码</strong></td></tr>
+                    <tr><td>位置编码</td><td>每层都有</td><td>3/4 层 RoPE + 1/4 层 NoPE</td></tr>
+                    <tr><td>注意力范围</td><td>全量或分块统一处理</td><td>RoPE 层 8K chunked + NoPE 层全量</td></tr>
+                    <tr><td>防涣散机制</td><td>温度缩放（YaRN）或无（DCA）</td><td>SSMax（$s \cdot \log n$ 对数锐化）+ 动态温度</td></tr>
+                    <tr><td>训练上下文</td><td>需在目标长度附近微调</td><td>256K 训练 → 泛化至 10M</td></tr>
+                    <tr><td>最大上下文</td><td>~128K</td><td><strong>10M</strong>（Scout）</td></tr>
+                    <tr><td>代表模型</td><td>LLaMA-2-YaRN, ChunkLLaMA2</td><td>Llama 4 Scout / Maverick</td></tr>
+                    <tr><td>检索精度</td><td>—</td><td>Needle-in-Haystack 10M 长度下 ~99%</td></tr>
+                    <tr><td>部署效率</td><td>—</td><td>Scout 经 INT4 量化后可运行在单张 H100</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-example">
+            <span class="card-title">具体实例</span>
+            <p>将整本《战争与和平》（约 3M 字符 ≈ 1M tokens）+ 100 张插图一次性输入 Llama 4 Scout，要求总结皮埃尔·别祖霍夫的人物弧线。</p>
+            <ol>
+                <li>文本+图像 token 化：1M 文本 token + 图像 token 混合为统一序列。</li>
+                <li>RoPE 层处理：每 8K token 为一个 chunk，块内精确位置编码，跨块通过 NoPE 层关联。</li>
+                <li>NoPE 层全局关联：第 4, 8, 12... 层在全序列上运行，无位置编码，通过"皮埃尔"这一内容 token 在不同章节的重复出现建立长距离语义连接。</li>
+                <li>SSMax 防止模糊：在 1M 长度下，SSMax 将 attention logits 放大 $s \cdot \log(10^6) \approx 0.43 \times 13.8 \approx 5.9$ 倍，确保模型能精准定位到第 200 页和第 800 页中关于皮埃尔的关键段落。</li>
+                <li>输出生成：模型生成连贯的跨全书人物分析，无需 RAG 分块检索。</li>
+            </ol>
+        </div>
+
+        <div class="card-summary">
+            <span class="card-title">💡 一句话理解本章</span>
+            iRoPE 是一场架构层面的认知重构——它不再纠结"怎么让位置编码更精确"，而是反问"我们真的每层都需要位置编码吗？"。通过 RoPE（局部精确）和 NoPE（全局语义）的层间交织，配合 SSMax 的聚光灯效应，冲击了 10M token 的极限。
+        </div>
+
+        <div class="card-check">
+            <span class="card-title">🧠 自检一下</span>
+            <ol>
+                <li>iRoPE 为什么要让部分层去掉位置编码（NoPE）？NoPE 层是怎么建立远距离依赖的？</li>
+                <li>SSMax 和普通的温度缩放有什么本质区别？为什么它能对抗 10M 级别的注意力涣散？</li>
+                <li>"市内导航 + 高铁网络"的比喻中，哪部分对应 RoPE 层？哪部分对应 NoPE 层？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <!-- ============ 终章 ============ -->
+        <h2>终章：系统比较与哲学升华</h2>
+
+        <h3>一、三大技术路线全面对比</h3>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>技术</th>
+                        <th>核心武器</th>
+                        <th>数学本质</th>
+                        <th>解决的根本问题</th>
+                        <th>扩展能力</th>
+                        <th>微调成本</th>
+                        <th>短上下文损失</th>
+                        <th>典型 PPL 变化</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>YaRN</strong></td>
+                        <td>非均匀频率插值（Ramp函数）+ 温度缩放</td>
+                        <td>$h(\theta_d) = (1-\gamma)\theta_d/s + \gamma\theta_d$</td>
+                        <td>RoPE 高频信息被 PI 抹杀 + 注意力涣散</td>
+                        <td>4K→128K（约32倍）</td>
+                        <td>0.1% 数据 / 约400步</td>
+                        <td>极小</td>
+                        <td>~+0.2</td>
+                    </tr>
+                    <tr>
+                        <td><strong>DCA</strong></td>
+                        <td>三套位置索引（Intra/Inter/Succ）</td>
+                        <td>钳制映射：真实距离 $\to [0, c-1]$</td>
+                        <td>未见过的大相对位置</td>
+                        <td>4K→100K（约25倍）</td>
+                        <td>零训练</td>
+                        <td>中等（远块粗粒度）</td>
+                        <td>~+0.56 (70B)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>iRoPE</strong></td>
+                        <td>RoPE/NoPE 层间交替 + SSMax</td>
+                        <td>$\tilde{q} = q \cdot s \cdot \log n$</td>
+                        <td>10M 级的极限位置与注意力涣散</td>
+                        <td>256K→10M（约40倍）</td>
+                        <td>需从头设计架构</td>
+                        <td>设计层面规避</td>
+                        <td>未公开</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h3>二、如何选择？——场景决策树</h3>
+
+        <div class="decision-tree">
+你需要长上下文能力吗？
+├── 是，但只有 4K 预训练模型
+│   ├── 有微调资源？
+│   │   ├── 有 → YaRN（效果最好，成本可控）
+│   │   └── 没有 → DCA（零成本，效果可接受）
+│   └── 有更长的预训练模型？
+│       └── 直接用（原生能力通常优于后处理）
+└── 你需要 1M+ 超超长上下文？
+    ├── 有条件从头训练 → iRoPE 架构
+    └── 没条件 → YaRN/DCA + 检索增强（RAG）
+        </div>
+
+        <h3>三、贯穿始终的三重境界（哲学总结）</h3>
+
+        <ol>
+            <li><strong>第一重（绝对坐标）</strong>：死记硬背"我在第 5 号"。（瓶颈：无界即崩溃）</li>
+            <li><strong>第二重（相对旋转 / RoPE）</strong>：学习"相隔 5 步的角度"。（瓶颈：角度有界）</li>
+            <li><strong>第三重（选择性忽略 / DCA + iRoPE）</strong>：模型终于顿悟——<strong>远距离不需要精确坐标，只需知道"你在远方"；甚至某些层根本不需要坐标，纯靠语义也能连接世界。</strong></li>
+        </ol>
+
+        <div class="card-summary" style="border-left-color:#8b5cf6;background:#f5f3ff;">
+            <p style="font-size:1.1rem;font-weight:500;">从 4K 到 128K 到 10M，长上下文扩展的本质，是人类对"位置"这一物理概念的持续祛魅——<strong>最强的位置感知，有时恰恰是学会"忘掉"那些不需要精确知道的远方。</strong></p>
+        </div>
+
+        <h3>四、延伸阅读：更多技术路线</h3>
+
+        <p>本文聚焦了 RoPE 生态下的三条主流路线，但长上下文领域还有其他值得关注的方向：</p>
+
+        <ul>
+            <li><strong>ALiBi（Attention with Linear Biases）</strong>：另一种免训练外推方案，直接给 Attention 加一个随距离线性衰减的偏置。思路比 DCA 更简单，在某些场景下效果也不错。</li>
+            <li><strong>StreamingLLM</strong>：基于"注意力 Sink"现象的流式处理方案。发现模型的前几个 token 会成为注意力的"锚点"，保留它们就能让模型无限流式生成。</li>
+            <li><strong>Mamba / 状态空间模型（SSM）</strong>：完全不同的技术路线——不用 Attention，用线性时间的状态空间模型建模序列。理论上可以无限长上下文，但目前在复杂推理任务上的表现还略逊于 Transformer。</li>
+        </ul>
+
+        <hr class="hr-divider">
+
+        <div class="card-check" style="border-left-color:#0f172a;background:#f8fafc;">
+            <span class="card-title">🧠 最后的思考</span>
+            <ol>
+                <li>如果你要做一个长文档问答产品，你会选择哪条技术路线？为什么？</li>
+                <li>"选择性忘记位置"这个洞察，对你理解人类的记忆和注意力有什么启发？</li>
+                <li>你觉得长上下文的下一个突破会在哪里？是更聪明的位置编码，还是全新的架构？</li>
+            </ol>
+        </div>
+
+        <hr class="hr-divider">
+
+        <div style="text-align:center;color:#94a3b8;font-size:0.85rem;padding:20px 0 8px;">
+            — 全文完 —
+        </div>
+
+    </div>
+</body>
+</html>
